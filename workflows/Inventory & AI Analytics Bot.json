@@ -1,0 +1,1552 @@
+{
+  "name": "My workflow 5",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "=\"YOUR_CRM_URL\"",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "jsonQuery": "={\n  \"limit\": 500,\n  \"date_from\": {{ Math.floor(Date.now() / 1000) - (365 * 24 * 60 * 60) }}\n}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "\"YOUR_CRM_API_KEY_HERE\""
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "a3fe41aa-e24c-4373-8aab-3399c3c80fe1",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "url": "=\"YOUR_CRM_URL\"",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "jsonQuery": "{\n  \"limit\": 500\n}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "\"YOUR_CRM_API_KEY_HERE\""
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        0,
+        224
+      ],
+      "id": "68b996bf-2422-4099-94a3-a4247bdcec74",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1-4. (Весь ваш код получения данных, периодов и сбора статистики оставляем как есть)\nconst productsRaw = $('HTTP Request1').first()?.json;\nconst salesRaw = $('HTTP Request').first()?.json;\n\nlet products = [];\nif (productsRaw) {\n    if (Array.isArray(productsRaw)) products = productsRaw;\n    else if (Array.isArray(productsRaw.data)) products = productsRaw.data;\n    else if (productsRaw.products && Array.isArray(productsRaw.products.data)) products = productsRaw.products.data;\n    else if (Array.isArray(productsRaw.products)) products = productsRaw.products;\n}\n\nconst sales = Array.isArray(salesRaw?.data) ? salesRaw.data : (Array.isArray(salesRaw) ? salesRaw : []);\n\nif (products.length === 0) return [{ json: { data: [] } }];\n\nconst SHORT_DAYS = 30;\nconst LONG_DAYS = 365;\n\nfunction periodStart(days) {\n    const start = new Date();\n    start.setHours(0, 0, 0, 0);\n    start.setDate(start.getDate() - days);\n    return start;\n}\n\nconst start30 = periodStart(SHORT_DAYS);\nconst start365 = periodStart(LONG_DAYS);\n\nfunction parseDateIdent(dateIdent) {\n    const s = String(dateIdent ?? '').trim();\n    if (!/^\\d{8}$/.test(s)) return null;\n    return new Date(Number(s.slice(0, 4)), Number(s.slice(4, 6)) - 1, Number(s.slice(6, 8)));\n}\n\nfunction getOrderDate(order) {\n    const ts = Number(order.purchase_date);\n    if (Number.isFinite(ts) && ts > 0) return new Date(ts * 1000);\n    return parseDateIdent(order.date_ident);\n}\n\nconst salesMap30 = {};\nconst salesMap365 = {};\n\nfor (const order of sales) {\n    const orderDate = getOrderDate(order);\n    if (!orderDate || !Array.isArray(order.items)) continue;\n    for (const item of order.items) {\n        if (Number(item.is_refund) === 1) continue;\n        const productId = String(item.product_id);\n        const qty = Number(item.quantity);\n        if (!productId || !Number.isFinite(qty) || qty <= 0) continue;\n        if (orderDate >= start365) salesMap365[productId] = (salesMap365[productId] || 0) + qty;\n        if (orderDate >= start30) salesMap30[productId] = (salesMap30[productId] || 0) + qty;\n    }\n}\n\n// 5. Обработка товаров\nconst processedProducts = products\n    .filter(prod => prod && typeof prod === 'object' && Object.keys(prod).length > 0)\n    .map((prod) => {\n        let stockObj = Array.isArray(prod.stock) ? (prod.stock[0] || {}) : (prod.stock || {});\n        const pid = String(prod.id ?? 'unknown');\n        const s30 = Math.round(salesMap30[pid] || 0);\n        const s365 = Math.round(salesMap365[pid] || 0);\n        const currentStock = Math.round(Number(stockObj.quantity ?? stockObj.instock ?? 0));\n        const dailySales = s30 / SHORT_DAYS;\n\n        return {\n            id: prod.id,\n            sku: prod.sku || 'N/A',\n            name: prod.name || 'Без названия',\n            category: prod.category?.[0]?.name || 'No Category',\n            current_stock: currentStock,\n            net_cost: Number(stockObj.net_price ?? 0),\n            sales_volume_30_days: s30,\n            sales_volume_365_days: s365,\n            avg_monthly_sales: Math.round(s365 / 12),\n            days_left: dailySales > 0 ? Math.round(currentStock / dailySales) : 999,\n        };\n    });\n\n// 6 & 7. Исправленная логика: принудительная уникализация\nconst finalData = processedProducts.map((item, index) => {\n    // 1. Убираем id и category, так как их нет в базе\n    const { id, category, ...rest } = item;\n    \n    // 2. Если SKU равен N/A, превращаем его в уникальный, добавляя ID или индекс\n    // Использование ID из оригинального товара делает SKU уникальным на 100%\n    if (rest.sku === 'N/A' || !rest.sku) {\n        rest.sku = `NA_${id || index}`; \n    }\n    \n    return rest;\n});\n\nreturn [{ json: { data: finalData } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        512,
+        96
+      ],
+      "id": "49701afa-6d46-4be1-b9b9-24493843e332",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        304,
+        96
+      ],
+      "id": "1f062429-af37-4324-8d28-6a82ea7d5edc",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://yourproject.supabase.co/rest/v1/predict_product_analytics?on_conflict=sku",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "\"YOUR_SUPABASE_KEY_HERE\""
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_KEY_HERE"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.data }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        688,
+        96
+      ],
+      "id": "ae146676-b5ea-4153-8973-8f644af4c556",
+      "name": "HTTP Request2"
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -752,
+        1168
+      ],
+      "id": "6915fe9f-2949-484c-8eea-5543a7af341a",
+      "name": "Telegram Trigger",
+      "webhookId": "b1ba49dc-9539-4e8d-9bbc-8900a2fd94d3",
+      "credentials": {
+        "telegramApi": {
+          "id": "lL6xRUuf60gFS9Dq",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.callback_query.data }}",
+                    "rightValue": "=cmd_critical",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "3d0381ce-30fd-4c24-9db5-5dbefaf47333"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "52552a0f-e9f7-4488-b73e-e967995d15e0",
+                    "leftValue": "={{ $json.callback_query.data }}",
+                    "rightValue": "cmd_outsiders",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "1603069a-4373-407e-a192-4d53a6bed527",
+                    "leftValue": "={{ $json.callback_query.data }}",
+                    "rightValue": "cmd_search",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "ed9676d6-a720-4f28-aa07-9f4c8a6ae168",
+                    "leftValue": "={{ $json.callback_query.data }}",
+                    "rightValue": "cmd_order",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        272,
+        960
+      ],
+      "id": "d5c4ab9c-d6e6-4946-b2e4-b2694ddc76cf",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.message?.chat.id || $json.callback_query?.message.chat.id }}",
+        "text": "Оберіть дію:",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🚨 Критичні залишки",
+                    "additionalFields": {
+                      "callback_data": "cmd_critical"
+                    }
+                  },
+                  {
+                    "text": "📉 Аутсайдери",
+                    "additionalFields": {
+                      "callback_data": "cmd_outsiders"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "📦 Сформувати замовлення",
+                    "additionalFields": {
+                      "callback_data": "cmd_order"
+                    }
+                  },
+                  {
+                    "text": "🔍 Пошук товару",
+                    "additionalFields": {
+                      "callback_data": "cmd_search"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        640,
+        432
+      ],
+      "id": "c4ae9975-39bd-4294-a434-a3add19cb6cd",
+      "name": "Send Buttons",
+      "webhookId": "14d95767-8caf-48f6-b227-41f5f39cd592",
+      "credentials": {
+        "telegramApi": {
+          "id": "iGWMpf2XPHdnR70x",
+          "name": "Telegram account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{$node[\"Telegram Trigger\"].json.message.chat.id || $node[\"Telegram Trigger\"].json.callback_query.message.chat.id}}",
+        "text": "Помилка. Будь ласка, напишіть /start для виклику меню.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        752,
+        1840
+      ],
+      "id": "9e31b8d4-dbe4-4b18-9064-66f98ba079a0",
+      "name": "Send Error Message",
+      "webhookId": "9822860c-fbfa-4d87-b64b-aea40666e2a6",
+      "credentials": {
+        "telegramApi": {
+          "id": "iGWMpf2XPHdnR70x",
+          "name": "Telegram account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "start-check",
+                    "leftValue": "={{ $json.message?.text }}",
+                    "rightValue": "/start",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "callback-check",
+                    "leftValue": "={{ !!$json.callback_query }}",
+                    "rightValue": "=/start",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "other-text-check",
+                    "leftValue": "={{ !!$json.message?.text && $json.message.text !== '/start' }}",
+                    "rightValue": "={{ true }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -528,
+        1152
+      ],
+      "id": "5f218b59-468b-4db1-b31b-ac79d41dadb0",
+      "name": "Switch2"
+    },
+    {
+      "parameters": {
+        "url": "https://yourproject.supabase.co/rest/v1/predict_product_analytics",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "\"YOUR_SUPABASE_KEY_HERE\""
+            },
+            {
+              "name": "Authorization",
+              "value": "\"Bearer YOUR_SUPABASE_KEY_HERE\""
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        640,
+        736
+      ],
+      "id": "0a34ee05-29ac-44d3-8238-c8e980807adc",
+      "name": "HTTP Request5"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        848,
+        736
+      ],
+      "id": "744610c8-eddf-435e-9441-87aee51a34aa",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Отримуємо вхідні дані\nconst input = items[0].json;\nconst products = input.data;\n\n// Фільтруємо: показуємо тільки те, що закінчилося (0) або закінчиться через 7 днів\nconst critical = products.filter(item => item.current_stock <= 0 || item.days_left <= 7);\n\n// Перевірка, чи є що показувати\nif (critical.length === 0) {\n  return { json: { text: \"✅ На даний момент критичних залишків немає, все в нормі!\" } };\n}\n\n// Формуємо повідомлення\nlet message = \"🚨 *Критичні залишки (терміново до замовлення):*\\n\\n\";\n\ncritical.forEach(item => {\n  const stockInfo = item.current_stock <= 0 ? \"🔴 НЕМАЄ\" : `${item.current_stock} шт.`;\n  const statusInfo = item.current_stock <= 0 ? \"Закінчився\" : `закінчиться через ${item.days_left} дн.`;\n  const dailySales = (item.avg_monthly_sales / 30).toFixed(1);\n\n  message += `📦 *${item.name}*\\n` + \n             `▫️ Залишок: ${stockInfo}\\n` +\n             `▫️ Статус: ${statusInfo}\\n` +\n             `▫️ Продажі: ${dailySales} шт./день\\n\\n`;\n});\n\n// Замість return { json: { text: message } };\n// Використовуйте це:\nreturn {\n  json: {\n    text: message,\n    // Ми явно передаємо Chat ID далі, щоб нода Telegram його бачила\n    chatId: items[0].json.message?.chat.id || items[0].json.callback_query?.message.chat.id\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1056,
+        736
+      ],
+      "id": "3e4b8aa4-cf0c-4eb2-86b1-a0aa0e7b9ac4",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message?.chat?.id ?? $('Telegram Trigger').item.json.callback_query?.message?.chat?.id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1216,
+        736
+      ],
+      "id": "9e7f83fa-665c-450a-ab07-c620c60eb381",
+      "name": "Send a text message2",
+      "webhookId": "4d8d4518-c04d-4f18-b1f8-d90bec6b5964",
+      "credentials": {
+        "telegramApi": {
+          "id": "iGWMpf2XPHdnR70x",
+          "name": "Telegram account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://yourproject.supabase.co/rest/v1/predict_product_analytics?select=*",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "\"YOUR_SUPABASE_KEY_HERE\""
+            },
+            {
+              "name": "Authorization",
+              "value": "\"Bearer YOUR_SUPABASE_KEY_HERE\""
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        640,
+        944
+      ],
+      "id": "18b87791-a801-4b1e-a579-6b4cf90ebbfc",
+      "name": "HTTP Request6"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Получаем входные данные\nconst items = $('HTTP Request6').all(); // Используем .all() для получения всех 56 объектов\nconst products = items.map(i => i.json);\n\nconsole.log('Всего получено товаров:', products.length);\n\n// 2. Фильтруем (делаем условия максимально простыми)\nconst outsiders = products.filter(item => {\n    // Явно преобразуем в числа, чтобы избежать сравнения строк \"0\" и числа 0\n    const sales = parseInt(item.sales_volume_365_days);\n    const stock = parseInt(item.current_stock);\n    \n    // Условие:\n    // 1. Продаж ровно 0\n    // 2. И товар есть на складе (> 0)\n    return  stock >= 0 && sales < 3;\n});\n\nconsole.log('Найдено аутсайдеров:', outsiders.length);\n\n// 3. Возвращаем результат\nreturn outsiders.map(item => ({ json: item }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        848,
+        944
+      ],
+      "id": "6dc7741f-5c3b-494c-8b29-3535e5923a89",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message?.chat?.id ?? $('Telegram Trigger').first().json.callback_query?.message?.chat?.id }}",
+        "text": "=⚠️ *Обнаружены товары-аутсайдеры!*\n{{ $json.data.map(item => `\\n📦 *${item.name}*\\nОстаток: ${item.current_stock} шт.\\n──────────`).join('') }}\n\n---\n_This message was sent automatically with n8n_",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1216,
+        944
+      ],
+      "id": "af2955f9-a2a2-411a-837b-3c1fc09036bd",
+      "name": "Send a text message",
+      "webhookId": "4d8d4518-c04d-4f18-b1f8-d90bec6b5964",
+      "credentials": {
+        "telegramApi": {
+          "id": "iGWMpf2XPHdnR70x",
+          "name": "Telegram account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        944
+      ],
+      "id": "87cd1d39-c8b0-42c1-9e11-6f9dd80f485a",
+      "name": "Aggregate1"
+    },
+    {
+      "parameters": {
+        "url": "https://yourproject.supabase.co/rest/v1/predict_product_analytics?select=*",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "\"YOUR_SUPABASE_KEY_HERE\""
+            },
+            {
+              "name": "Authorization",
+              "value": "\"Bearer YOUR_SUPABASE_KEY_HERE\""
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        640,
+        1296
+      ],
+      "id": "4482d744-4bcc-4e3d-a597-f9e9c49bb870",
+      "name": "HTTP Request7"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $('HTTP Request7').all();\nconst products = items.map(i => i.json);\n\n// Фильтруем товары, которые \"Важные\" (имеют продажи) и \"Скоро закончатся\" (дефицитные)\nconst replenishmentList = products.filter(item => {\n    const avgMonthly = Number(item.avg_monthly_sales ?? 0);\n    const daysLeft = Number(item.days_left ?? 0);\n   \n    \n    // Условие: продается >= 1 в месяц И запас менее 10 дней И остаток > 0\n    return avgMonthly >= 1 && daysLeft < 10;\n});\n\n// Возвращаем результат\nreturn replenishmentList.map(item => ({ json: item }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        848,
+        1296
+      ],
+      "id": "a63e82d2-ae8f-418d-bcf7-5b69c4d6fdb9",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        1296
+      ],
+      "id": "cf4caff2-ba47-4ad1-b719-8c49bbb25665",
+      "name": "Aggregate2"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message?.chat?.id ?? $('Telegram Trigger').first().json.callback_query?.message?.chat?.id }}",
+        "text": "=🚨 *Внимание: Критический запас товаров!*\nЗакончились или закончатся менее чем через 10 дней:\n\n{{ $json.data.map(item => `\\n📦 *${item.name}*\\nSKU: \\`${item.sku}\\`\\nОстаток: ${item.current_stock} шт.\\nЗакончится через: ${item.days_left} дней\\n──────────`).join('') }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1216,
+        1296
+      ],
+      "id": "fcf1ffbb-ad84-4e3e-98e5-2433d08ba46c",
+      "name": "Send a text message1",
+      "webhookId": "4d8d4518-c04d-4f18-b1f8-d90bec6b5964",
+      "credentials": {
+        "telegramApi": {
+          "id": "iGWMpf2XPHdnR70x",
+          "name": "Telegram account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{$json.chat_id}}",
+        "text": "Введите товар",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1040,
+        1104
+      ],
+      "id": "0e236161-31ce-4aa8-80e1-16683b2e0640",
+      "name": "Send a text message3",
+      "webhookId": "d335ef1e-538a-42f2-8e3d-af00166490b6",
+      "credentials": {
+        "telegramApi": {
+          "id": "iGWMpf2XPHdnR70x",
+          "name": "Telegram account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://yourproject.supabase.co/rest/v1/bot_sessions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "\"YOUR_SUPABASE_KEY_HERE\""
+            },
+            {
+              "name": "Authorization",
+              "value": "\"Bearer YOUR_SUPABASE_KEY_HERE\""
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": {{$json.chat_id}},\n  \"state\": \"{{$json.state}}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        848,
+        1104
+      ],
+      "id": "07427030-12a8-45c4-95c9-e9edb9b7492e",
+      "name": "HTTP Request3"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "863f72d4-2089-4704-ac1e-4bce6054095b",
+              "name": "=chat_id",
+              "value": "={{$json.callback_query.from.id}}",
+              "type": "number"
+            },
+            {
+              "id": "d7660df0-c65d-4c44-815c-2cf07fb81ee5",
+              "name": "state",
+              "value": "search_product",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        640,
+        1104
+      ],
+      "id": "2df5228d-d4cd-425d-a685-19cd6dec935b",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "url": "https:/yourproject.supabase.co/rest/v1/bot_sessions",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "=eq.{{$json.message.chat.id}}"
+            },
+            {
+              "name": "order",
+              "value": "created_at.desc"
+            },
+            {
+              "name": "limit",
+              "value": "10"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "\"YOUR_SUPABASE_KEY_HERE\""
+            },
+            {
+              "name": "Authorization",
+              "value": "\"Bearer YOUR_SUPABASE_KEY_HERE\""
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        272,
+        1184
+      ],
+      "id": "6d628e04-d363-4acd-ab8e-fcb781ff2100",
+      "name": "HTTP Request8"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = items.map(item => item.json);\n\n// ищем активный режим поиска\nconst searchSession = data.find(item =>\n  item.state === \"search_product\"\n);\n\n// берём сообщение из Telegram\nconst telegram = data.find(item =>\n  item.message?.text\n);\n\nreturn [\n  {\n    json: {\n      state: searchSession?.state || null,\n      query: telegram?.message?.text || null,\n      chat_id: telegram?.message?.chat?.id || null\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        1520
+      ],
+      "id": "bcc16611-b6cc-412c-a77a-ed3717384e81",
+      "name": "Code in JavaScript4"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.state}}",
+                    "rightValue": "search_product",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "0c7c53e1-f274-49e2-ad58-3eaa3b67d705"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        640,
+        1520
+      ],
+      "id": "b8af50c9-a52c-4f48-8fda-122862bc411d",
+      "name": "Switch1",
+      "executeOnce": false,
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        48,
+        1520
+      ],
+      "id": "ec13dd8a-2078-4dd2-a9be-fc4a0ec15e92",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://yourproject.supabase.co/rest/v1/bot_sessions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "\"YOUR_SUPABASE_KEY_HERE\""
+            },
+            {
+              "name": "Authorization",
+              "value": "\"Bearer YOUR_SUPABASE_KEY_HERE\""
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n\"chat_id\": {{ $json.message.chat.id }},\n\"state\": null,\n\"query\": null\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        48,
+        880
+      ],
+      "id": "3ae28a52-cfb7-4a12-9059-ecaa8e3551db",
+      "name": "HTTP Request10",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        272,
+        432
+      ],
+      "id": "bc9f08d6-5e42-42fb-8fd1-01a005c126f5",
+      "name": "Merge2"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.query }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=Ты — помощник интернет-магазина ритуальных товаров. Твоя задача — нормализовать поисковый запрос пользователя на основе предоставленного каталога.  Список товаров: r2, Атлас баклажан, Атлас белый, Атлас бордо, Атлас Чорний, Атлас электрик, Букет 1, Велюр синий электрик, Велюр стрейч Бордо, Велюр фиолетовый, Вінок 321, Вінок 322, Вінок великий, Вінок малельнкий, Вінок середній, Гайки 1000шт, Гвоздика g-1, Гроб 6г лак белый, Гроб 6г лак красный, Гроб 6г лак орех, Гроб 6г лак рыжий спец, Гроб 6г лак темная вишня, Гроб 6г лак темная вишня спец, Гроб 6г рыжий, Жатка, Закрутка \"Метелик\", Лента 5-100, Маркер, Мереживо золото 5см, Мереживо золото 7см (276м), Мереживо серебро 5см, Парча золото, Парча серебро, Подкладка Белая, Подкладка Бордо, Подкладка Синий, Подкладка Черный, Проcтыня \"Аликанте\", Роза r-22, Роза r-3, Румынская H-10, Ручка \"Саркофаг\", Рушник Габардин, Рушник шелк, Рушникове Ваф, Рюша 5см (черный), Рюша белая, Саркофаг Анд орех круглый, Саркофаг белый АНД округленный, Саркофаг белый на трубах плоски, Саркофаг орех плоский, Саркофаг прямоугольный премиум, Скотч 1000м, Смуга фольга Роза Бутон, Таблички Пластик, Церковный набор.  Инструкция: 1. Сравни запрос пользователя с этим списком. 2. Если в запросе есть опечатки или сокращения, исправь их до названия из списка (например, \"вен б\" -> \"Вінок великий\"). 3. Если пользователь ищет товар, который есть в списке, ответь ТОЛЬКО названием этого товара одной строкой. 4. Если товар не удалось определить, ответь строго: \"null\". 5. Не добавляй никаких пояснений, вежливых фраз или приветствий. Только название или \"null\".  Запрос пользователя: {{ $json.query }}"
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        912,
+        1504
+      ],
+      "id": "a1b5b648-deee-4b1e-b50b-b375a6c2ed70",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "model": "qwen/qwen3-32b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        912,
+        1696
+      ],
+      "id": "9f3bbf5d-60de-48b7-829c-6025305b8d04",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "sO9gtuBnRmtSPGK2",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "=GET",
+        "url": "=https://yourproject.supabase.co/rest/v1/predict_product_analytics?name=eq.{{ $json.text }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "\"YOUR_SUPABASE_KEY_HERE\""
+            },
+            {
+              "name": "Authorization",
+              "value": "\"Bearer YOUR_SUPABASE_KEY_HERE\""
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1216,
+        1504
+      ],
+      "id": "21c70470-ee99-4536-9198-a83cf0f8759e",
+      "name": "HTTP Request11",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d2c3ac22-2389-4769-8fbe-57ab014e8022",
+              "leftValue": "={{ $json.sku }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1376,
+        1504
+      ],
+      "id": "2085329c-cadc-42df-ad73-b5a80cfad8c3",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$node[\"Telegram Trigger\"].json.message.chat.id}}",
+        "text": "Помилка. Не знайшов такий товар, спробуйте ще раз.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1488,
+        1840
+      ],
+      "id": "46368160-679e-4c6d-bcfb-c9cd0cfd4223",
+      "name": "Send Error Message1",
+      "webhookId": "9822860c-fbfa-4d87-b64b-aea40666e2a6",
+      "credentials": {
+        "telegramApi": {
+          "id": "iGWMpf2XPHdnR70x",
+          "name": "Telegram account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const product = $json;\n\nreturn [\n  {\n    json: {\n      text:\n`📦 Товар найден\n\nНазвание: ${product.name}\n\nОстаток: ${product.current_stock} шт.\nСебестоимость: ${product.net_cost}\nПродажи за 30 дней: ${product.sales_volume_30_days}\nХватит примерно на: ${product.days_left} дней`\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1616,
+        1488
+      ],
+      "id": "e10d188a-c627-4105-8c34-7578d217f0d8",
+      "name": "Code in JavaScript5"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$node[\"Telegram Trigger\"].json.message.chat.id}}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1728,
+        1840
+      ],
+      "id": "dd171657-141a-43a1-ae9e-e9625f36042f",
+      "name": "Send Error Message2",
+      "webhookId": "9822860c-fbfa-4d87-b64b-aea40666e2a6",
+      "credentials": {
+        "telegramApi": {
+          "id": "iGWMpf2XPHdnR70x",
+          "name": "Telegram account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -320,
+        128
+      ],
+      "id": "aeac6b0f-efbf-4214-a883-5153c775979a",
+      "name": "Schedule Trigger"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Switch2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request6",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch2": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP Request10",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request8",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "HTTP Request5": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Send a text message2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request6": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Aggregate1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate1": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request7": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "Aggregate2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate2": {
+      "main": [
+        [
+          {
+            "node": "Send a text message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request3": {
+      "main": [
+        [
+          {
+            "node": "Send a text message3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request8": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript4": {
+      "main": [
+        [
+          {
+            "node": "Switch1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch1": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Error Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request10": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge2": {
+      "main": [
+        [
+          {
+            "node": "Send Buttons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request11",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request11": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Error Message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript5": {
+      "main": [
+        [
+          {
+            "node": "Send Error Message2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "a60d0fa4-2613-44f4-8a59-b49abab61d9d",
+  "meta": {
+    "instanceId": "27fbeedbd52dc428134f87a6297814f7712701cd5b531a9568ae29dfdb85f248"
+  },
+  "nodeGroups": [],
+  "id": "sDIjWN12gPBxnaac",
+  "tags": []
+}
